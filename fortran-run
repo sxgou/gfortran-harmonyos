@@ -24,8 +24,19 @@ BASENAME=$(basename "$SRC" .f90)
 DIR=$(dirname "$SRC")
 OUTPUT="${DIR}/${BASENAME}.so"
 
-# Create C runner (destructor-based)
-cat > "$RUNNER_C" << 'RUNNER_EOF'
+# Build argv for C stub from remaining arguments
+PROGNAME="${BASENAME}"
+ARGV_GEN="\"${PROGNAME}\""
+for a in "$@"; do
+    # Escape backslash, double-quote, and control chars for C string literal
+    a_esc=$(printf '%s' "$a" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    ARGV_GEN="${ARGV_GEN}, \"${a_esc}\""
+done
+
+# Create C runner (destructor-based) with actual argc/argv
+ARGC=$#  # number of args including program name
+ARGC=$((ARGC + 1))
+cat > "$RUNNER_C" << RUNNER_EOF
 #include <stdlib.h>
 #include <stdio.h>
 extern int main(int argc, char *argv[]);
@@ -35,16 +46,17 @@ extern void _gfortrani_init_units(void);
 extern void _gfortrani_flush_all_units(void);
 static void run(void) __attribute__((destructor));
 static void run(void) {
-    char *argv[] = { "fortran_prog", 0 };
+    char *argv[] = { ${ARGV_GEN}, 0 };
     int opts[] = { 255, 6, 0, 5, 1 };
-    _gfortran_set_args(1, argv);
+    _gfortran_set_args(${ARGC}, argv);
     _gfortran_set_options(5, opts);
     _gfortrani_init_units();
-    main(1, argv);
+    main(${ARGC}, argv);
     _gfortrani_flush_all_units();
 }
 RUNNER_EOF
 
+# Need to unstash because heredoc with shell vars turns off set -e for the var expansion
 # Compile runner if stale
 if [ ! -f "$RUNNER_O" ] || [ "$RUNNER_C" -nt "$RUNNER_O" ]; then
     $CLANG -c -fPIC -O2 -o "$RUNNER_O" "$RUNNER_C"
