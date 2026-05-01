@@ -781,3 +781,33 @@ export LD_LIBRARY_PATH="$HOME/.local/gfortran/lib64:$HOME/.local/gfortran/lib/gc
 # 使用
 fortran-run hello.f90
 ```
+
+## 附录 C：功能测试报告
+
+测试日期：2026-05-01，编译器：GCC 14.2.0 gfortran on aarch64-unknown-linux-ohos
+
+| # | 测试项 | 结果 | 说明 |
+|---|--------|------|------|
+| 1 | 基本 I/O | ✅ | `print *`, `write(*,*)` 标准输出正常 |
+| 2 | 数学内建函数 | ✅ | sin, cos, sqrt, exp, log, atan, abs, mod, max, min, floor, ceiling, nint, aint |
+| 3 | 文件 I/O | ✅ | open(read/write), close, iostat 错误处理 |
+| 4 | 数组操作 | ✅ | 数组构造器、slice、sum、minval、maxval、reshape |
+| 5 | 字符/字符串 | ✅ | trim, len, len_trim, index, char, ichar, 连接 |
+| 6 | 派生类型 & iso_c_binding | ✅ | type, bind(C), C_INT/C_DOUBLE/C_FLOAT |
+| 7 | Format 语句 | ✅ | 格式描述符 I0, F8.4, I5.3, 隐含 DO |
+| 8 | 随机数 | ✅ | random_seed(size/put), random_number |
+| 9 | 复杂 I/O | ✅ | 内部文件写入, advance='no' 非推进 I/O |
+| 10 | 动态内存 | ✅ | allocatable 数组, allocate/deallocate, 100×100 数组 |
+| 11 | 函数与子程序 | ✅ | interface block, contains, intent(in) |
+| 12 | 模块 | ✅ | module/use, 跨单元调用 |
+| 13 | Where/Pack/Merge | ✅ | where-elsewhere, pack, merge 数组操作 |
+
+### 测试结论
+
+gfortran 在 HarmonyOS 上功能完整，所有核心 Fortran 特性正常工作。可直接用于 R 语言集成（通过 `dlopen` 加载共享库）。
+
+### 已知限制
+
+- OpenMP 未启用（configure 时 `--disable-gomp`）
+- Coarrays 未启用（libcaf_single.a 已安装但未测试）
+- `execute_command_line` / `system` 因 hmmac 限制不可用
