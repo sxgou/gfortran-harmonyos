@@ -162,5 +162,6 @@ Then `dyn.load("test.so")` in R.
 | `build.sh` | Build wrapper |
 | `setup-env.sh` | Environment setup |
 | `fortran-run` | Compile & run Fortran programs |
+| `ohos-push` | Push git commits to GitHub via API |
 | `test/` | Test suite (14 tests) |
 | `BUILD-RECIPE.md` | Full build and usage guide |
