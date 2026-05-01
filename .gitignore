@@ -1,0 +1,29 @@
+# GCC source (download manually via download.sh)
+gcc-14.2.0/
+gcc-14.2.0.tar.xz
+
+# Build artifacts
+build/
+
+# Temp files
+tmp/
+confGkmPJp/
+
+# Logs
+*.log
+
+# Compiled binaries
+test/test-stderr
+test/test-stdout
+test/test-stdout-addr
+test/test_as_exit
+test_exec
+
+# Object files
+*.o
+*.lo
+*.so
+*.a
+
+# macOS/editor artifacts
+.DS_Store

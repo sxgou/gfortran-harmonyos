@@ -1,0 +1,72 @@
+#!/bin/sh
+# fortran-run - Compile and run Fortran programs on HarmonyOS
+# Uses destructor + init_units to work around I/O restrictions.
+set -e
+
+GFORTRAN="${GFORTRAN:-gfortran}"
+CLANG="${CLANG:-aarch64-unknown-linux-ohos-clang}"
+HOST="${HOST:-/data/storage/el2/base/host}"
+LIBGFORTRAN_A="/storage/Users/currentUser/.local/gfortran/lib64/libgfortran.a"
+LIBGCC_A="/storage/Users/currentUser/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0/libgcc.a"
+LIBBACKTRACE_A="/storage/Users/currentUser/gfortran-harmonyos/build/libbacktrace/.libs/libbacktrace.a"
+SYSROOT="/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/sysroot"
+RUNNER_C="/data/storage/el2/base/.fortran_runner.c"
+RUNNER_O="/data/storage/el2/base/.fortran_runner.o"
+
+if [ $# -lt 1 ]; then
+    echo "Usage: fortran-run program.f90 [args...]"
+    exit 1
+fi
+
+SRC="$1"
+shift
+BASENAME=$(basename "$SRC" .f90)
+DIR=$(dirname "$SRC")
+OUTPUT="${DIR}/${BASENAME}.so"
+
+# Create C runner (destructor-based)
+cat > "$RUNNER_C" << 'RUNNER_EOF'
+#include <stdlib.h>
+#include <stdio.h>
+extern int main(int argc, char *argv[]);
+extern void _gfortran_set_args(int argc, char *argv[]);
+extern void _gfortran_set_options(int num, int opts[]);
+extern void _gfortrani_init_units(void);
+extern void _gfortrani_flush_all_units(void);
+static void run(void) __attribute__((destructor));
+static void run(void) {
+    char *argv[] = { "fortran_prog", 0 };
+    int opts[] = { 255, 6, 0, 5, 1 };
+    _gfortran_set_args(1, argv);
+    _gfortran_set_options(5, opts);
+    _gfortrani_init_units();
+    main(1, argv);
+    _gfortrani_flush_all_units();
+}
+RUNNER_EOF
+
+# Compile runner if stale
+if [ ! -f "$RUNNER_O" ] || [ "$RUNNER_C" -nt "$RUNNER_O" ]; then
+    $CLANG -c -fPIC -O2 -o "$RUNNER_O" "$RUNNER_C"
+fi
+
+# Compile Fortran to PIC object
+$GFORTRAN -c -fPIC --sysroot="$SYSROOT" -o "${DIR}/${BASENAME}_pic.o" "$SRC"
+
+# Link as shared library with static libgfortran
+$CLANG -shared -nostartfiles \
+    -o "$OUTPUT" \
+    "${DIR}/${BASENAME}_pic.o" \
+    "$RUNNER_O" \
+    -Wl,--whole-archive -Wl,--allow-multiple-definition \
+    "$LIBGFORTRAN_A" \
+    -Wl,--no-whole-archive \
+    "$LIBBACKTRACE_A" -lm \
+    -Wl,--whole-archive "$LIBGCC_A" -Wl,--no-whole-archive \
+    --sysroot="$SYSROOT"
+
+echo "Built: $OUTPUT"
+
+# Run via LD_PRELOAD
+export LD_LIBRARY_PATH="/storage/Users/currentUser/.local/gfortran/lib64:/storage/Users/currentUser/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0"
+exec env LD_PRELOAD="$OUTPUT" "$HOST" "$@"
