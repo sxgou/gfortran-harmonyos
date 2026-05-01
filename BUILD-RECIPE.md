@@ -801,6 +801,7 @@ fortran-run hello.f90
 | 11 | 函数与子程序 | ✅ | interface block, contains, intent(in) |
 | 12 | 模块 | ✅ | module/use, 跨单元调用 |
 | 13 | Where/Pack/Merge | ✅ | where-elsewhere, pack, merge 数组操作 |
+| 14 | 命令行参数 | ✅ | command_argument_count, get_command_argument(0) 程序名 |
 
 ### 测试结论
 
