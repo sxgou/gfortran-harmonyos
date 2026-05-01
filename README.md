@@ -146,15 +146,11 @@ Then `dyn.load("test.so")` in R.
 11. **Large build directory**: After building GCC, the `build/` directory
     is ~30GB. It can be deleted after `make install` to free space.
 
-12. **Git push requires API script**: HarmonyOS git lacks `remote-https`
-    helper and `ssh` is blocked by hmmac. Use
-    `python3 /data/storage/el2/base/git-update2.py` to push to GitHub.
-
-13. **`--allow-multiple-definition` needed for static linking**: When using
+12. **`--allow-multiple-definition` needed for static linking**: When using
     `-Wl,--whole-archive` with `libgfortran.a`, also pass
     `-Wl,--allow-multiple-definition` to suppress duplicate symbols.
 
-14. **Build artifacts left in source directory**: `fortran-run` generates
+13. **Build artifacts left in source directory**: `fortran-run` generates
     `.o` and `.so` files alongside the source `.f90` file.
 
 ## File Structure
