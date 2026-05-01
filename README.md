@@ -165,3 +165,8 @@ Then `dyn.load("test.so")` in R.
 | `ohos-push` | Push git commits to GitHub via API |
 | `test/` | Test suite (14 tests) |
 | `BUILD-RECIPE.md` | Full build and usage guide |
+
+## Related HarmonyOS Projects
+
+- [hermes-harmonyos](https://github.com/sxgou/hermes-harmonyos) — Hermes Agent compatibility layer (pure-Python shims for Rust-native deps)
+- [jupyter-harmonyos](https://github.com/sxgou/jupyter-harmonyos) — Jupyter Notebook compatibility layer (ctypes-based ZMQ shim)
