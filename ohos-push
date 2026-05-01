@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""
+ohos-push — Push git commits to GitHub via API (for HarmonyOS)
+
+HarmonyOS git lacks remote-https and hmmac blocks ssh, so standard
+git push doesn't work. This script uses curl + GitHub Data API.
+
+Usage:
+  ohos-push                    # Push current branch to matching remote branch
+  ohos-push main               # Push to specific branch (local -> remote)
+  ohos-push main:main          # Push local master to remote main
+
+Requires GH_TOKEN or GITHUB_TOKEN environment variable, or
+~/.config/ohos-git-token file containing the token.
+"""
+
+import json, os, subprocess, sys, base64
+
+BASE = "https://api.github.com"
+HEADERS = ["Content-Type: application/json"]
+
+def die(msg):
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+def get_token():
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        return token
+    token_path = os.path.expanduser("~/.config/ohos-git-token")
+    if os.path.isfile(token_path):
+        with open(token_path) as f:
+            token = f.read().strip()
+        if token:
+            return token
+    die("no GitHub token found. Set GH_TOKEN env var or create ~/.config/ohos-git-token")
+
+def get_remote_info():
+    result = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        die("no git remote 'origin' found")
+    url = result.stdout.strip()
+    # Parse: https://github.com/owner/repo.git or git@github.com:owner/repo.git
+    url = url.replace("git@", "").replace(":", "/").replace(".git", "")
+    parts = url.split("/")
+    try:
+        idx = parts.index("github.com")
+        owner, repo = parts[idx + 1], parts[idx + 2]
+    except (ValueError, IndexError):
+        die(f"cannot parse owner/repo from remote URL: {url}")
+    return owner, repo
+
+def api(method, path, data=None):
+    cmd = ["curl", "-s", "-H", f"Authorization: token {TOKEN}"] + HEADERS
+    if data is not None:
+        cmd.extend(["-d", json.dumps(data)])
+    if method == "PATCH":
+        cmd.extend(["-X", "PATCH"])
+    cmd.append(BASE + path)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        resp = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        die(f"API response not JSON: {result.stdout[:200]}")
+    if resp.get("message") in ("Bad credentials", "Requires authentication", "Rate limit exceeded"):
+        die(f"API error: {resp['message']}")
+    return resp
+
+
+TOKEN = get_token()
+OWNER, REPO = get_remote_info()
+
+# Parse branch mapping
+local_branch = None
+remote_branch = None
+if len(sys.argv) >= 2:
+    parts = sys.argv[1].split(":")
+    local_branch = parts[0]
+    remote_branch = parts[1] if len(parts) > 1 else parts[0]
+
+# Detect current branch if not specified
+if local_branch is None:
+    result = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True)
+    local_branch = result.stdout.strip()
+    remote_branch = local_branch
+    if not local_branch:
+        die("not on any branch. Specify a branch name, e.g.: ohos-push main")
+
+print(f"Pushing {OWNER}/{REPO}:{local_branch} -> {remote_branch}")
+
+# Get remote ref — try the specified branch first, fall back to default branch
+print("Fetching remote ref...")
+resp = api("GET", f"/repos/{OWNER}/{REPO}/git/refs/heads/{remote_branch}")
+if resp.get("message"):
+    # Branch not found on remote; try repo's default branch
+    repo_info = api("GET", f"/repos/{OWNER}/{REPO}")
+    if repo_info.get("message"):
+        die(f"repository {OWNER}/{REPO} not found")
+    default = repo_info.get("default_branch", "main")
+    print(f"  branch '{remote_branch}' not found on remote, using '{default}'")
+    remote_branch = default
+    resp = api("GET", f"/repos/{OWNER}/{REPO}/git/refs/heads/{remote_branch}")
+    if resp.get("message"):
+        die(f"remote branch '{remote_branch}' not found on {OWNER}/{REPO}")
+head_sha = resp["object"]["sha"]
+print(f"  remote HEAD: {head_sha[:12]} ({remote_branch})")
+
+# Get changed files between remote HEAD and local commit
+result = subprocess.run(
+    ["git", "rev-parse", local_branch],
+    capture_output=True, text=True
+)
+if result.returncode != 0:
+    die(f"no local branch '{local_branch}'")
+local_commit_sha = result.stdout.strip()
+
+result = subprocess.run(
+    ["git", "diff", "--name-only", head_sha, local_commit_sha],
+    capture_output=True, text=True
+)
+changed = [f for f in result.stdout.strip().split("\n") if f]
+
+if not changed:
+    # Check if diff-from-remote is empty due to force-push scenario
+    result = subprocess.run(
+        ["git", "diff-tree", "--no-commit-id", "-r", "--name-only", local_commit_sha],
+        capture_output=True, text=True
+    )
+    changed = [f for f in result.stdout.strip().split("\n") if f]
+
+print(f"  changed files: {len(changed)}")
+
+# Get commit message
+result = subprocess.run(
+    ["git", "log", "-1", "--format=%s%n%b", local_commit_sha],
+    capture_output=True, text=True
+)
+commit_msg = result.stdout.strip()
+
+# Get old tree
+resp = api("GET", f"/repos/{OWNER}/{REPO}/git/commits/{head_sha}")
+old_tree_sha = resp["tree"]["sha"]
+
+resp = api("GET", f"/repos/{OWNER}/{REPO}/git/trees/{old_tree_sha}?recursive=1")
+old_tree = resp["tree"]
+
+# Create blobs for changed files
+new_blobs = {}
+for f in changed:
+    if not os.path.isfile(f):
+        print(f"  (skipped deleted: {f})")
+        continue
+    with open(f, "rb") as fh:
+        content = fh.read()
+    encoded = base64.b64encode(content).decode("ascii")
+    resp = api("POST", f"/repos/{OWNER}/{REPO}/git/blobs",
+               {"content": encoded, "encoding": "base64"})
+    new_blobs[f] = resp["sha"]
+    print(f"  blob {f}: {resp['sha'][:12]}")
+
+# Build new tree: keep unchanged, update changed
+new_tree = []
+for item in old_tree:
+    if item["type"] == "tree":
+        continue
+    if item["path"] not in changed:
+        new_tree.append({"path": item["path"], "mode": item["mode"],
+                         "type": "blob", "sha": item["sha"]})
+
+for f in changed:
+    if f not in new_blobs:
+        continue
+    mode_result = subprocess.run(["git", "ls-files", "-s", f], capture_output=True, text=True)
+    mode = mode_result.stdout.split()[0] if mode_result.stdout else "100644"
+    new_tree.append({"path": f, "mode": mode, "type": "blob", "sha": new_blobs[f]})
+
+resp = api("POST", f"/repos/{OWNER}/{REPO}/git/trees", {"tree": new_tree})
+new_tree_sha = resp["sha"]
+print(f"  new tree: {new_tree_sha[:12]}")
+
+# Create commit
+commit_data = {"message": commit_msg, "tree": new_tree_sha, "parents": [head_sha]}
+resp = api("POST", f"/repos/{OWNER}/{REPO}/git/commits", commit_data)
+new_commit_sha = resp["sha"]
+print(f"  new commit: {new_commit_sha[:12]}")
+
+# Update ref
+resp = api("PATCH", f"/repos/{OWNER}/{REPO}/git/refs/heads/{remote_branch}",
+           {"sha": new_commit_sha, "force": False})
+print(f"\nDone! {remote_branch} -> {new_commit_sha}")
