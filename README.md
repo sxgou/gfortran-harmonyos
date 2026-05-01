@@ -79,6 +79,7 @@ All core Fortran features tested and working:
 | Format statements      | ✅ |
 | iso_c_binding          | ✅ |
 | Command-line arguments | ✅ |
+| Standard input (read *) | ❓ (untested) |
 | R integration (dlopen) | ✅ (untested but expected) |
 
 Full test report: [BUILD-RECIPE.md §附录C](BUILD-RECIPE.md)
@@ -110,10 +111,51 @@ Then `dyn.load("test.so")` in R.
 1. **hmmac prevents direct ELF execution**: All user-created executables are
    blocked by HarmonyOS kernel-level MAC, regardless of filesystem. The
    LD_PRELOAD + destructor approach (`fortran-run`) works around this.
-2. **No OpenMP**: libgomp was disabled at configure time (`--disable-gomp`).
+
+2. **`fortran-run` uses destructor execution**: Fortran code runs after the
+   host process's `main()` returns. This means:
+   - Only one Fortran `.so` can run per host process (symbol conflicts if
+     multiple are loaded)
+   - Some Fortran runtime state may behave differently than in a normal
+     executable (e.g., `read *` from stdin is untested)
+
 3. **No `execute_command_line`**: Requires fork/exec which hmmac blocks.
-4. **Duplicate symbols in libgfortran.a**: `environ_test.o` conflicts with
-   `environ.o` — use `--allow-multiple-definition` when linking.
+
+4. **No OpenMP**: libgomp was disabled at configure time (`--disable-gomp`).
+
+5. **Standard input (`read *`) untested**: Due to the destructor execution
+   model, reading from stdin has not been verified and may not work.
+
+6. **Duplicate symbols in libgfortran.a**: `environ_test.o` conflicts with
+   `environ.o` — use `-Wl,--allow-multiple-definition` when linking.
+
+7. **`_gfortrani_` internal symbols**: `_gfortrani_init_units()` and
+   `_gfortrani_flush_all_units()` must be called manually (see the generated
+   C runner in `fortran-run`). Not needed when using `fortran-run`.
+
+8. **`-nostartfiles` required for shared libs**: OHOS sysroot lacks
+   `crtbeginS.o`. When linking `.so` files, always use `-nostartfiles`.
+
+9. **libbacktrace must be linked separately**: When linking with
+   `libgfortran.a`, also link `libbacktrace.a` from the build tree.
+
+10. **LLD alignment errors during GCC build**: `R_AARCH64_LDST64_ABS_LO12_NC`
+    errors affect cc1/xgcc linking only, not libgfortran/f951. Make retries
+    during build (`make -j$(nproc)` may fail, just re-run).
+
+11. **Large build directory**: After building GCC, the `build/` directory
+    is ~30GB. It can be deleted after `make install` to free space.
+
+12. **Git push requires API script**: HarmonyOS git lacks `remote-https`
+    helper and `ssh` is blocked by hmmac. Use
+    `python3 /data/storage/el2/base/git-update2.py` to push to GitHub.
+
+13. **`--allow-multiple-definition` needed for static linking**: When using
+    `-Wl,--whole-archive` with `libgfortran.a`, also pass
+    `-Wl,--allow-multiple-definition` to suppress duplicate symbols.
+
+14. **Build artifacts left in source directory**: `fortran-run` generates
+    `.o` and `.so` files alongside the source `.f90` file.
 
 ## File Structure
 
