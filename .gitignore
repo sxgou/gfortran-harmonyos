@@ -18,12 +18,14 @@ test/test-stdout
 test/test-stdout-addr
 test/test_as_exit
 test_exec
+hello
 
 # Object files
 *.o
 *.lo
 *.so
 *.a
+*.mod
 
 # macOS/editor artifacts
 .DS_Store
