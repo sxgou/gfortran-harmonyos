@@ -272,7 +272,38 @@ make install prefix=/storage/Users/currentUser/.local/gfortran
 
 注：必须覆盖 `prefix`，因为 libtool 在 configure 时硬编码了安装路径为 `PREFIX`（`~/.local/gfortran`），但 hmdfs 上的绝对路径不同。如果 install 时报 "permission denied"，检查目标目录权限。
 
-### 3.6 libbacktrace 独立构建（用于运行时）
+### 3.6 CRT 文件配置（使 gfortran 能编译独立可执行文件）
+
+安装后，gfortran 可直接编译 Fortran 代码为 `.o` 目标文件。但如果要用 `gfortran -o hello hello.f90` 编译独立可执行文件，还需要复制 OHOS SDK 的 CRT（C Runtime）启动文件到 gfortran 的库目录。
+
+**原因：**
+- gfortran 的 `STARTFILE_SPEC` 期望 `Scrt1.o`、`crti.o`、`crtbegin.o`、`crtend.o`、`crtn.o` 在库搜索路径中
+- 这些文件位于 OHOS SDK 的不同位置（sysroot 和 Clang 的 compiler-rt），gfortran 默认找不到
+- `crtbegin.o` 在 Clang 中名为 `clang_rt.crtbegin.o`，需要重命名
+
+```bash
+GFORTRAN_LIB=/storage/Users/currentUser/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0
+SYSROOT=/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/sysroot
+CLANGRT=/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/llvm/lib/clang/15.0.4/lib/aarch64-linux-ohos
+
+# musl CRT 启动文件
+cp "$SYSROOT/usr/lib/aarch64-linux-ohos/Scrt1.o" "$GFORTRAN_LIB/"
+cp "$SYSROOT/usr/lib/aarch64-linux-ohos/crti.o"  "$GFORTRAN_LIB/"
+cp "$SYSROOT/usr/lib/aarch64-linux-ohos/crtn.o"  "$GFORTRAN_LIB/"
+
+# Clang compiler-rt CRT（需重命名为 GCC 期望的名称）
+cp "$CLANGRT/clang_rt.crtbegin.o" "$GFORTRAN_LIB/crtbegin.o"
+cp "$CLANGRT/clang_rt.crtend.o"   "$GFORTRAN_LIB/crtend.o"
+```
+
+配置完成后，编译独立可执行文件：
+```bash
+gfortran -o hello hello.f90 --sysroot="$SYSROOT"
+```
+
+注意：生成的 ELF 在 HarmonyOS 上仍因 hmmac 安全策略**无法直接执行**（参见 6.1 节），需通过 LD_PRELOAD + destructor 模式运行。
+
+### 3.7 libbacktrace 独立构建（用于运行时）
 
 libgfortran 构建时已经自行编译了 libbacktrace（在 `build/libbacktrace/` 下），但输出的 `.a` 需要单独编译以确保 PIC 版本可用。
 
@@ -708,7 +739,9 @@ gfortran -dumpspecs | head -20
 | `~/.local/gfortran/lib64/libgfortran.so.5`                              | GCC make install | 运行时动态库（gfortran 运行时加载） |
 | `~/.local/gfortran/lib/gcc/.../f951`                                    | GCC make install | Fortran 编译后端                    |
 | `~/.local/gfortran/lib/gcc/.../libgcc.a`                                | GCC make install | GCC 运行时辅助函数                  |
-| `~/gfortran-harmonyos/build/libbacktrace/.libs/libbacktrace.a`          | GCC 构å»º产物 | 堆栈回溯库                          |
+| `~/gfortran-harmonyos/build/libbacktrace/.libs/libbacktrace.a`          | GCC 构建产物     | 堆栈回溯库                          |
+| `~/.local/gfortran/lib/gcc/.../14.2.0/Scrt1.o`                         | 手动复制         | musl CRT 入口文件                   |
+| `~/.local/gfortran/lib/gcc/.../14.2.0/crtbegin.o`                      | 手动复制         | Clang compiler-rt CRT 初始化        |
 | `/data/storage/el2/base/host`                                           | 手动编译         | LD_PRELOAD 宿主进程                 |
 | `/data/storage/el2/base/.fortran_runner.c`                              | fortran-run 生成 | C 运行时存根（destructor）          |
 | `/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/sysroot` | SDK 预装         | musl sysroot                        |
@@ -727,8 +760,18 @@ make install prefix=~/.local/gfortran  # 安装
 # 编译 host
 aarch64-unknown-linux-ohos-clang -o /data/storage/el2/base/host /data/storage/el2/base/host.c
 
+# 复制 CRT 文件（使 gfortran 可直接编译独立可执行文件）
+SYSROOT=/data/service/hnp/ohos-sdk.org/ohos-sdk_26.0.0.18/ohos/native/sysroot
+CLANGRT=$SYSROOT/../../llvm/lib/clang/15.0.4/lib/aarch64-linux-ohos
+GFORTRAN_LIB=~/.local/gfortran/lib/gcc/aarch64-unknown-linux-ohos/14.2.0
+cp $SYSROOT/usr/lib/aarch64-linux-ohos/Scrt1.o $GFORTRAN_LIB/
+cp $SYSROOT/usr/lib/aarch64-linux-ohos/crti.o  $GFORTRAN_LIB/
+cp $SYSROOT/usr/lib/aarch64-linux-ohos/crtn.o  $GFORTRAN_LIB/
+cp $CLANGRT/clang_rt.crtbegin.o $GFORTRAN_LIB/crtbegin.o
+cp $CLANGRT/clang_rt.crtend.o   $GFORTRAN_LIB/crtend.o
+
 # 安装 fortran-run
-cp ~/gfortran-harmonyos/fortran-run.sh ~/.local/bin/fortran-run
+cp ~/gfortran-harmonyos/fortran-run ~/.local/bin/fortran-run
 chmod +x ~/.local/bin/fortran-run
 
 # 设置环境
