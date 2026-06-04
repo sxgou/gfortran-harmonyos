@@ -49,10 +49,13 @@ cd build && make -j$(nproc)
 # 4. Install
 make install prefix=~/.local/gfortran
 
-# 5. Install CRT files (required for linking executables)
-#    See BUILD-RECIPE.md §3.6 for details
+# 5. Post-install fixup (replace hardcoded-path wrappers, create symlinks)
+bash post-install.sh ~/.local/gfortran
 
-# 6. Setup environment
+# 6. Install CRT files (required for linking executables)
+#    See BUILD-RECIPE.md §3.7 for details
+
+# 7. Setup environment
 source setup-env.sh
 ```
 
@@ -160,9 +163,11 @@ Then `dyn.load("test.so")` in R.
 | `download.sh` | Download GCC 14.2.0 source |
 | `configure.sh` | Configure with OHOS Clang |
 | `build.sh` | Build wrapper |
-| `setup-env.sh` | Environment setup |
+| `post-install.sh` | Post-install fixup (replace wrappers, create symlinks) |
+| `setup-env.sh` | Environment setup (auto-detects and repairs wrappers) |
 | `fortran-run` | Compile & run Fortran programs |
 | `ohos-push` | Push git commits to GitHub via API |
+| `wrappers/` | Self-relocating wrapper sources (f951, cc1, xgcc) |
 | `test/` | Test suite (14 tests) |
 | `BUILD-RECIPE.md` | Full build and usage guide |
 
