@@ -272,7 +272,50 @@ make install prefix=/storage/Users/currentUser/.local/gfortran
 
 注：必须覆盖 `prefix`，因为 libtool 在 configure 时硬编码了安装路径为 `PREFIX`（`~/.local/gfortran`），但 hmdfs 上的绝对路径不同。如果 install 时报 "permission denied"，检查目标目录权限。
 
-### 3.6 CRT 文件配置（使 gfortran 能编译独立可执行文件）
+### 3.6 安装后修复（post-install）
+
+GCC 的 `make install` 不会正确处理以下问题，需要在安装后额外修复：
+
+| 问题 | 原因 | 表现 |
+|------|------|------|
+| **f951 包装器路径硬编码** | `f951` 包装器（编译自 `f951-wrap.c`）中硬编码了构建路径如 `/storage/Users/currentUser/gfortran-harmonyos/build/gcc/f951.real`，安装后路径不存在 | gfortran 调用 `f951` 时立即失败（无输出或 silent exit） |
+| **cc1/cc1plus 包装器路径硬编码** | 同上 | cc1 调用失败 |
+| **gfortran (xgcc) 驱动包装器 argv[0] 依赖** | GCC 安装的 `gfortran` 包装器（编译自 `xgcc-wrap.c`）通过 `argv[0]` 定位 `gfortran.bin`，通过 PATH 调用时 `argv[0]` 只有 `"gfortran"` 无路径 | `gfortran --version` 无输出，exit=1 |
+| **`aarch64-unknown-linux-ohos-as` 缺失** | GCC 配置时指定了 `--target=aarch64-unknown-linux-ohos`，因此 gfortran 在子进程调用时使用 `aarch64-unknown-linux-ohos-as` 作为汇编器名，但该可执行文件在 HarmonyOS 上不存在 | gfortran 编译到汇编阶段时失败（`.s` 文件生成后无法汇编为 `.o`） |
+
+本项目提供了 `post-install.sh` 脚本一键修复：它会编译自定位版本包装器（通过 `/proc/self/exe` 在运行时解析路径）并创建汇编器软链接。
+
+```bash
+# 在 make install 之后运行：
+bash post-install.sh [PREFIX]
+# 默认 PREFIX=$HOME/.local/gfortran
+```
+
+脚本执行内容：
+
+1. 编译 `wrappers/f951-wrap.c` → `${PREFIX}/lib/gcc/aarch64-unknown-linux-ohos/14.2.0/f951`
+2. 编译 `wrappers/cc1-wrap.c` → `${PREFIX}/lib/gcc/aarch64-unknown-linux-ohos/14.2.0/cc1`（如果安装了 cc1）
+3. 编译 `wrappers/xgcc-wrap.c` → `${PREFIX}/bin/gfortran`（替换 argv[0] 依赖的旧包装器）
+4. 创建 `aarch64-unknown-linux-ohos-as` 软链接 → `/data/service/hnp/bin/as`
+
+验证修复：
+
+```bash
+# 测试 gfortran 驱动包装器
+gfortran --version
+# GNU Fortran (GCC) 14.2.0
+
+# 测试编译
+cat > /tmp/test.f << 'EOF'
+      end
+EOF
+gfortran -c -o /tmp/test.o /tmp/test.f
+# 应成功生成 /tmp/test.o，无错误输出
+```
+
+当重新生成环境时（`source setup-env.sh`），`setup-env.sh` 也会自动检查并修复上述问题。
+
+### 3.7 CRT 文件配置（使 gfortran 能编译独立可执行文件）
 
 安装后，gfortran 可直接编译 Fortran 代码为 `.o` 目标文件。但如果要用 `gfortran -o hello hello.f90` 编译独立可执行文件，还需要复制 OHOS SDK 的 CRT（C Runtime）启动文件到 gfortran 的库目录。
 
@@ -303,7 +346,7 @@ gfortran -o hello hello.f90 --sysroot="$SYSROOT"
 
 注意：生成的 ELF 在 HarmonyOS 上仍因 hmmac 安全策略**无法直接执行**（参见 6.1 节），需通过 LD_PRELOAD + destructor 模式运行。
 
-### 3.7 libbacktrace 独立构建（用于运行时）
+### 3.8 libbacktrace 独立构建（用于运行时）
 
 libgfortran 构建时已经自行编译了 libbacktrace（在 `build/libbacktrace/` 下），但输出的 `.a` 需要单独编译以确保 PIC 版本可用。
 
